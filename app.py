@@ -1,8 +1,12 @@
 from enum import unique
-from flask import Flask, render_template, request, jsonify, url_for, flash, redirect
+from flask import Flask,  request, jsonify
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import exc
 from flask_migrate import Migrate
 from flask.views import MethodView
+from datetime import datetime
+from app import errors
+import jsonschema
 
 
 
@@ -15,50 +19,78 @@ migrate = Migrate(app, db)
 def home():
     return "Hello, flask!"
 
-
-def post():
-    return "this is where we post"
-
-
 def check_health():
     return jsonify({
         "status": "ok"
         })
 
-class UserModel(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(69), index=True, unique=True)
-    email = db.Column(db.String(128), index=True, unique=True)
-    password= db.Column(db.String(123))
-    text =  db.Column(db.String(500))
 
-    #def __init__(self, username, email, password):
-     ##  self.username =username
-       # self.email = email
-        #self.password = password
-
-def show_all():
-   return render_template('show_all.html', UserModel = UserModel.query.all() )
-
-def new():
-    if request.method == 'POST':
-        if not request.form['username'] or not request.form['email'] or not request.form['password']:
-            flash('Please enter all the fileds', 'error')
+class BaseModel():
+    @classmethod
+    def id(cls, object_id):
+        object = cls.query.get(object_id)
+        if object:
+            return object
         else:
-            UserModell = UserModel(request.form['username'], request.form['email'], request.form['password'], request.form['text'])
+            raise errors.CantFindIt
 
-            db.session.add(UserModell)
+    def delete(self):
+        db.session.delete(self)
+        try:
             db.session.commit()
-            flash('record was succefully added')
-            return redirect(url_for('show_all'))
-    return render_template('new.html')
+        except exc.IntegrityError:
+            raise errors.NoLuck
+    
+    def adds(self):
+        db.session.add(self)
+        try:
+            db.session.commit()
+        except exc.IntegrityError:
+            raise errors.NoLuck
 
 
-app.add_url_rule('/new', view_func=new, methods=['GET', 'POST'])
+class UserModelAd(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), index=True, nullable=False)
+    text =  db.Column(db.Text, index=True, nullable=False)
+    date_of_creation = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    id_of_user = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    user = db.relationship('User', backref=db.backref('ads', lazy=True))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.dtext,
+            'created_at': self.date_of_creation,
+        }
+
+
+class ViewForAdds(MethodView):
+
+    def get(self, ad_id):
+        add = UserModelAd.by_id(ad_id)
+        return jsonify(add.to_dict())
+
+    def post(self):
+        add = UserModelAd(**request.json)
+        add.add()
+        return jsonify(add.to_dict())
+
+    def delete(self, ad_id):
+        add = UserModelAd.by_id(ad_id)
+        add.delete()
+        return jsonify({'message': f'Ad was deleted'})
+
+
 app.add_url_rule('/', view_func=home, methods=['GET'])
-app.add_url_rule('/show', view_func=show_all, methods=['GET'] )
 app.add_url_rule('/check_health', view_func=check_health, methods=['GET'])
 
-if __name__ == '__main__':
-    db.create_all()
-    app.run(debug=True)
+app.add_url_rule('/ads/', view_func=ViewForAdds.as_view('ads_create'), methods=['POST', ])
+app.add_url_rule('/ads/<int:ad_id>', view_func=ViewForAdds.as_view('ads_get'), methods=['GET', ])
+app.add_url_rule('/ads/<int:ad_id>', view_func=ViewForAdds.as_view('ads_delete'), methods=['DELETE', ])
+
+
+#if __name__ == '__main__':
+#    db.create_all()
+#    app.run(debug=True)
